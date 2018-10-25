@@ -35,6 +35,7 @@ Usage of ./bamboo:
     	Subdomain in BambooHR [<subdomain>.bamboohr.com] (optional) (default "cloudops")
   -u string
     	Email Address of the user (required)
+  -v	Version of the binary (optional)
 ```
 
 *Note: The '-subdomain' and '-dl' (download path) will likely need to be specified for your use...*

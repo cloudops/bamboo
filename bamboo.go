@@ -14,11 +14,15 @@ import (
 
 	"github.com/bgentry/speakeasy"
 	"github.com/gocolly/colly"
+	"github.com/kennygrant/sanitize"
+	homedir "github.com/mitchellh/go-homedir"
 	"github.com/tidwall/gjson"
 )
 
 var (
-	col = colly.NewCollector()
+	col       = colly.NewCollector()
+	homeDir   string
+	subdomain string
 )
 
 // Login - Login with credentials
@@ -42,11 +46,11 @@ func Login(user, pass string) error {
 		rToken = e.Attr("value")
 	})
 
-	// actually visit the login page (initial GET)
-	col.Visit("https://cloudops.bamboohr.com/login.php?r=%2Fhome%2F")
+	// visit the login page (initial GET so we can populate the CSRFToken, etc...)
+	col.Visit(fmt.Sprintf("https://%s.bamboohr.com/login.php", subdomain))
 
 	// authenticate with a POST
-	err := col.Post("https://cloudops.bamboohr.com/login.php?r=%2Fhome%2F", map[string]string{
+	err := col.Post(fmt.Sprintf("https://%s.bamboohr.com/login.php", subdomain), map[string]string{
 		"username":  user,
 		"password":  pass,
 		"login":     loginToken,
@@ -73,6 +77,7 @@ type Candidate struct {
 	Phone                 string `json:"phone"`
 	PositionApplicantID   string `json:"positionApplicantId"`
 	PositionID            string `json:"positionId"`
+	Position              string
 	Rating                string `json:"rating"`
 	ResumeFileID          string `json:"resumeFileId"`
 	ResumeFileDataID      string `json:"resumeFileDataId"`
@@ -85,21 +90,30 @@ type Candidate struct {
 
 // DownloadResume - Download the resume file to the specified path
 func (c *Candidate) DownloadResume(path string) error {
-	FilePath := fmt.Sprintf("%s%s%s", path, string(os.PathSeparator), c.ResumeFileName)
+	FilePath := fmt.Sprintf("%s%s%s-%s-%s-[%s]%s",
+		path,
+		string(os.PathSeparator),
+		sanitize.BaseName(c.FirstName),
+		sanitize.BaseName(c.LastName),
+		c.Rating,
+		sanitize.BaseName(c.Position),
+		filepath.Ext(c.ResumeFileName))
 	// only download if the file does not already exist
 	if _, err := os.Stat(FilePath); os.IsNotExist(err) {
-		// NOTE START
-		// Not able to use `colly` as per the code below because it corrupts the saved files.
+		fmt.Println(FilePath)
+		// NOTE -- START
+		// We are not able to use `colly` as per the code below because it corrupts the saved files.
 
 		// col.OnResponse(func(r *colly.Response) {
 		// 	r.Save(FilePath)
 		// })
 		// // get file
-		// col.Visit(fmt.Sprintf("https://cloudops.bamboohr.com/files/download.php?id=%s", c.ResumeFileID))
+		// col.Visit(fmt.Sprintf("https://%s.bamboohr.com/files/download.php?id=%s", subdomain, c.ResumeFileID))
 
-		// NOTE END
+		// NOTE -- END
 
-		url := fmt.Sprintf("https://cloudops.bamboohr.com/files/download.php?id=%s", c.ResumeFileID)
+		// expressive file download functionality
+		url := fmt.Sprintf("https://%s.bamboohr.com/files/download.php?id=%s", subdomain, c.ResumeFileID)
 		cookies := col.Cookies(url)
 
 		// Create the file
@@ -133,7 +147,7 @@ func (c *Candidate) DownloadResume(path string) error {
 	return errors.New("File exists")
 }
 
-// QueryCandidates - Get Candidates with a query string
+// QueryCandidates - Get Candidates with a query string (check format via the Ajax on-page)
 func QueryCandidates(query string) ([]Candidate, error) {
 	candidates := make([]Candidate, 0)
 
@@ -142,8 +156,10 @@ func QueryCandidates(query string) ([]Candidate, error) {
 		r.Headers.Set("Accept", "application/json, text/javascript, */*; q=0.01")
 	})
 
+	// when the json data is received, populate our object
 	col.OnResponse(func(r *colly.Response) {
 		jsonStr := string(r.Body)
+		// fmt.Println(jsonStr)
 
 		ids := gjson.Get(jsonStr, "data.candidates.allIds")
 		//fmt.Println(ids)
@@ -157,23 +173,31 @@ func QueryCandidates(query string) ([]Candidate, error) {
 			if err := json.Unmarshal([]byte(details.String()), &candidate); err != nil {
 				fmt.Println(err.Error())
 			}
+			candidate.Position = gjson.Get(jsonStr, fmt.Sprintf("data.positions.byIds.%s.name", candidate.PositionID)).String()
 			//fmt.Println(candidate)
 			candidates = append(candidates, candidate)
 		}
 	})
 
-	// start scraping
-	col.Visit(fmt.Sprintf("https://cloudops.bamboohr.com/hiring/candidates?%s", query))
+	// do the actual query for the json data
+	col.Visit(fmt.Sprintf("https://%s.bamboohr.com/hiring/candidates?%s", subdomain, query))
 
 	return candidates, nil
 }
 
+// execution starts here...
 func main() {
-	user := flag.String("u", "", "user's email address")
-	pass := flag.String("p", "", "user's password")
-	path := flag.String("dl", "~/Google Drive File Stream/Team Drives/HR Drive/Bamboo Resumes", "resume download base path")
+	homeDir, _ := homedir.Dir()
+	user := flag.String("u", "", "Email Address of the user (required)")
+	pass := flag.String("p", "", "Password of the user (optional)")
+	limit := flag.String("n", "500", "Number of results to query (optional)")
+	sd := flag.String("subdomain", "cloudops", "Subdomain in BambooHR [<subdomain>.bamboohr.com] (optional)")
+	path := flag.String("dl", fmt.Sprintf("%s%sGoogle Drive File Stream%sTeam Drives%sHR Drive%sBamboo Resumes",
+		homeDir, string(os.PathSeparator), string(os.PathSeparator), string(os.PathSeparator), string(os.PathSeparator)), "Path to save the files to (validate)")
 	flag.Parse()
+	subdomain = *sd
 
+	// user email is required
 	if *user == "" {
 		log.Fatal("'-u' flag is required")
 	}
@@ -193,20 +217,23 @@ func main() {
 
 	fmt.Println("Starting downloads...")
 
-	// User-Agent used for screen scraping (Chrome)
+	// User-Agent used for requests (Chrome)
 	col.UserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36"
 
+	// login to bamboo
 	err = Login(*user, *pass)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	candidates, err := QueryCandidates("offset=0&limit=500&sortOrder=DESC")
+	// query for candidate data
+	candidates, err := QueryCandidates(fmt.Sprintf("offset=0&limit=%s&sortOrder=DESC", *limit))
 	if err != nil {
 		log.Fatal(err)
 	}
 	//fmt.Println(candidates)
 
+	// download resumes
 	downloaded := 0
 	for _, c := range candidates {
 		err = c.DownloadResume(*path)

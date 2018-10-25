@@ -189,7 +189,7 @@ func QueryCandidates(query string) ([]Candidate, error) {
 func main() {
 	homeDir, _ := homedir.Dir()
 	user := flag.String("u", "", "Email Address of the user (required)")
-	pass := flag.String("p", "", "Password of the user (optional)")
+	pass := flag.String("p", "", "Password of the user (optional, will be prompted)")
 	limit := flag.String("n", "500", "Number of results to query (optional)")
 	sd := flag.String("subdomain", "cloudops", "Subdomain in BambooHR [<subdomain>.bamboohr.com] (optional)")
 	path := flag.String("dl", fmt.Sprintf("%s%sGoogle Drive File Stream%sTeam Drives%sHR Drive%sBamboo Resumes",

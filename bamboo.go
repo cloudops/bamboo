@@ -194,8 +194,14 @@ func main() {
 	sd := flag.String("subdomain", "cloudops", "Subdomain in BambooHR [<subdomain>.bamboohr.com] (optional)")
 	path := flag.String("dl", fmt.Sprintf("%s%sGoogle Drive File Stream%sTeam Drives%sHR Drive%sBamboo Resumes",
 		homeDir, string(os.PathSeparator), string(os.PathSeparator), string(os.PathSeparator), string(os.PathSeparator)), "Path to save the files to (validate)")
+	version := flag.Bool("v", false, "Version of the binary (optional)")
 	flag.Parse()
 	subdomain = *sd
+
+	if *version {
+		fmt.Println(Version)
+		os.Exit(0)
+	}
 
 	// user email is required
 	if *user == "" {

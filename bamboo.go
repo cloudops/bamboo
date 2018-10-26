@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/bgentry/speakeasy"
@@ -98,6 +99,7 @@ func (c *Candidate) DownloadResume(path string) error {
 		c.Rating,
 		sanitize.BaseName(c.Position),
 		filepath.Ext(c.ResumeFileName))
+	log.Println("evaluating: ", FilePath)
 	// only download if the file does not already exist
 	if _, err := os.Stat(FilePath); os.IsNotExist(err) {
 		fmt.Println(FilePath)
@@ -163,6 +165,7 @@ func QueryCandidates(query string) ([]Candidate, error) {
 
 		ids := gjson.Get(jsonStr, "data.candidates.allIds")
 		//fmt.Println(ids)
+		log.Println("ids to review: ", ids)
 
 		for _, id := range ids.Array() {
 			//fmt.Println(id)
@@ -188,12 +191,16 @@ func QueryCandidates(query string) ([]Candidate, error) {
 // execution starts here...
 func main() {
 	homeDir, _ := homedir.Dir()
+	dlPath := fmt.Sprintf("%s%sGoogle Drive File Stream%sTeam Drives%sHR Drive%sBamboo Resumes",
+		homeDir, string(os.PathSeparator), string(os.PathSeparator), string(os.PathSeparator), string(os.PathSeparator))
+	if runtime.GOOS == "windows" {
+		dlPath = `G:\Team Drives\HR Drive\Bamboo Resumes`
+	}
 	user := flag.String("u", "", "Email Address of the user (required)")
 	pass := flag.String("p", "", "Password of the user (optional, will be prompted)")
 	limit := flag.String("n", "500", "Number of results to query (optional)")
 	sd := flag.String("subdomain", "cloudops", "Subdomain in BambooHR [<subdomain>.bamboohr.com] (optional)")
-	path := flag.String("dl", fmt.Sprintf("%s%sGoogle Drive File Stream%sTeam Drives%sHR Drive%sBamboo Resumes",
-		homeDir, string(os.PathSeparator), string(os.PathSeparator), string(os.PathSeparator), string(os.PathSeparator)), "Path to save the files to (validate)")
+	path := flag.String("dl", dlPath, "Path to save the files to (validate)")
 	version := flag.Bool("v", false, "Version of the binary (optional)")
 	flag.Parse()
 	subdomain = *sd
@@ -220,6 +227,16 @@ func main() {
 		log.Fatal(err)
 	}
 	flag.Set("dl", strings.TrimSuffix(absPath, string(os.PathSeparator)))
+
+	// logging setup
+	_ = os.Remove("bamboo.log") // start by deleting the log file...
+	logFile, err := os.OpenFile("bamboo.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatalf("error opening file: %v", err)
+	}
+	defer logFile.Close()
+
+	log.SetOutput(logFile)
 
 	fmt.Println("Starting downloads...")
 
